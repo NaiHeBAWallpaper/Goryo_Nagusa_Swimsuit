@@ -489,8 +489,8 @@ function init() {
 			if (props.dialogy) textbox.style.top = props.dialogy.value + '%';
 			if (props.drawHitboxes) mouseOptions.drawHitboxes = props.drawHitboxes.value;
 			if (props.lensflare) {
-				showLensflare = props.lensflare.value;
-				if (showLensflare) restoreSpecifiedSlots();
+				glareEnabled = props.lensflare.value;
+				if (spineData) applyGlareOpacity(spineData.skeleton.data);
 			}
 
 			// 监听模型分辨率设置
@@ -593,7 +593,6 @@ function reloadModel() {
 		bgm = null;
 	}
 	
-	slotsHidden = false;
 
 	// Stop all intro audio and clear related timeouts
 	introAudioIsPlaying = false;
@@ -704,9 +703,6 @@ function interactionLoad() {
 function load(dynamicBinaryPath, dynamicAtlasPath) {
 	spineData = loadSpineData(dynamicBinaryPath, dynamicAtlasPath, false);
 
-	// 在设置动画之前隐藏指定的骨骼
-	hideSpecifiedSlots();
-
 	// User Option to skip Intro Animation
 	if (introAnimation) {
 		spineData.state.addAnimation(0, 'Start_Idle_01', false);
@@ -743,6 +739,25 @@ function load(dynamicBinaryPath, dynamicAtlasPath) {
 	canvas.style.visibility = 'visible';
 }
 
+const GLARE_SLOTS = new Set([
+	"FX_lensflare_02", "FX_lensflare_01", "FX_Light_len_01"
+]);
+const GLARE_OPACITY = 0.24;
+let glareEnabled = true;
+const originalGlareOpacity = new WeakMap();
+
+// Scale attachment opacity once so animated slot colors still control the light.
+function applyGlareOpacity(skeletonData) {
+	for (const skin of skeletonData.skins) {
+		for (const { slotIndex, attachment } of skin.getAttachments()) {
+			const slot = skeletonData.slots[slotIndex];
+			if (!GLARE_SLOTS.has(slot.name) || slot.blendMode !== 1 || !attachment.color) continue;
+			if (!originalGlareOpacity.has(attachment)) originalGlareOpacity.set(attachment, attachment.color.a);
+			attachment.color.a = originalGlareOpacity.get(attachment) * (glareEnabled ? GLARE_OPACITY : 0);
+		}
+	}
+}
+
 function loadSpineData(binaryPath, atlasPath, premultipliedAlpha) {
 	// Load the texture atlas from the AssetManager.
 	let atlas = assetManager.get(atlasPath);
@@ -756,6 +771,7 @@ function loadSpineData(binaryPath, atlasPath, premultipliedAlpha) {
 	// Set the scale to apply during parsing, parse the file, and create a new skeleton.
 	skeletonBinary.scale = 1;
 	let skeletonData = skeletonBinary.readSkeletonData(assetManager.get(binaryPath));
+	applyGlareOpacity(skeletonData);
 	let skeleton = new spine.Skeleton(skeletonData);
 	let bounds = calculateSetupPoseBounds(skeleton);
 
@@ -777,48 +793,9 @@ function calculateSetupPoseBounds(skeleton) {
 	return { offset: offset, size: size };
 }
 
-let showLensflare = false;
-let slotsHidden = false;
 
-// 定义需要隐藏的骨骼名称列表（全局变量）
-const slotsToHide = [
-	"FX_lensflare_01",
-	"FX_lensflare_02",
-	"FX_Light_len_01"
-];
 
-function hideSpecifiedSlots() {
-	if (!showLensflare && spineData && spineData.skeleton) {
-		let foundSlots = 0;
-		let totalSlots = slotsToHide.length;
-		
-		// 遍历并隐藏所有指定的骨骼（每次渲染都执行）
-		slotsToHide.forEach(slotName => {
-			let slot = spineData.skeleton.findSlot(slotName);
-			if (slot) {
-				slot.setAttachment(null);
-				foundSlots++;
-			}
-		});
-		
-		// 只在首次执行时显示调试信息
-		// if (!slotsHidden) {
-		// 	console.log("总共尝试隐藏 " + totalSlots + " 个骨骼，成功隐藏 " + foundSlots + " 个");
-		// 	slotsHidden = true;
-		// }
-	}
-}
 
-function restoreSpecifiedSlots() {
-	if (spineData && spineData.skeleton) {
-		slotsToHide.forEach(slotName => {
-			let slot = spineData.skeleton.findSlot(slotName);
-			if (slot && slot.data.attachmentName) {
-				slot.setAttachment(spineData.skeleton.getAttachment(slot.data.index, slot.data.attachmentName));
-			}
-		});
-	}
-}
 
 function render() {
     let now = Date.now() / 1000;
@@ -838,9 +815,6 @@ function render() {
         state.update(delta);
 		state.apply(skeleton);
 		
-		// 在渲染时检查并隐藏指定的骨骼
-		hideSpecifiedSlots();
-
         const pointX = TPoint.x;
         const pointY = TPoint.y;
         applyHeadpat(delta);
